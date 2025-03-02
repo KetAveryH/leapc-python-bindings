@@ -146,6 +146,8 @@ class ActionController:
 
         self.pinch_timer = 0.0  # Timer to track time since last pinch
         self.pinch_timeout = 0.1  # Time frame to consider a swipe after pinch (in seconds)
+        self.left_pinch_time = 0.0  # Track the last pinch times separately
+        self.right_pinch_time = 0.0  # Track the last pinch times separately
         self.last_pinch_time = 0.0  # Last time a pinch was detected
 
         self.gesture_timeout = 0.3  # Time frame to reset complex gesture (in seconds)
@@ -190,17 +192,14 @@ class ActionController:
         left_timestamp = None
         right_timestamp = None
 
-        # If we have any frames in the buffer, use the most recent frame
         if self.hand_buffer.data_buffer:
             latest = self.hand_buffer.data_buffer[-1]
-            left_coords = latest["left"]   # (x, y, z) or None
-            right_coords = latest["right"] # (x, y, z) or None
+            left_coords = latest["left"]
+            right_coords = latest["right"]
             frame_timestamp = latest["timestamp"]
 
-            # If there's valid left coords, set left_timestamp
             if left_coords is not None:
                 left_timestamp = frame_timestamp
-            # If there's valid right coords, set right_timestamp
             if right_coords is not None:
                 right_timestamp = frame_timestamp
 
@@ -319,8 +318,9 @@ class ActionController:
             elif hand_type == "left":
                 self.update_left_hand_state(hand.grab_strength, hand.pinch_strength, hand.palm.position.y, dot_product)
 
-        # Check for swipe after pinch regardless of current state
-        self._check_for_pinch_swipe()
+        # Check for swipe after pinch for **both hands**
+        self._check_for_pinch_swipe("right")
+        self._check_for_pinch_swipe("left")
 
         # Check if index fingers are overlapping or crossed
         crossed_finger_status = self.check_finger_cross(event.hands)
@@ -393,30 +393,29 @@ class ActionController:
             self.zoom_baseline_distance = None
             self.zoom_multiplier = 1.0
              
-    def _check_for_pinch_swipe(self):
+    def _check_for_pinch_swipe(self, hand_type):
         """
         Checks for swipe gestures while pinch-holding or after pinch is released.
+        This function is now hand-specific.
         """
         current_time = time.time()
-        time_since_last_pinch = current_time - self.last_pinch_time
+        pinch_time = self.left_pinch_time if hand_type == "left" else self.right_pinch_time
+        time_since_last_pinch = current_time - pinch_time
 
-        # Check if the time since the last pinch is within the timeout period
         if time_since_last_pinch <= self.pinch_timeout:
-            # Implement logic to check for swipe gestures
-            vx, vy, vz = self.right_hand_velocity
+            velocity = self.left_hand_velocity if hand_type == "left" else self.right_hand_velocity
+            vx, vy, vz = velocity
 
-            # Check if the velocity exceeds the swipe threshold
+            # Detect swipes based on velocity
             if abs(vx) > self.SWIPE_THRESHOLD or abs(vy) > self.SWIPE_THRESHOLD:
                 if vx > self.SWIPE_THRESHOLD:
-                    self.complex_state = "swipe-right"
+                    self.hand_state[hand_type] = "swipe-right"
                 elif vx < -self.SWIPE_THRESHOLD:
-                    self.complex_state = "swipe-left"
+                    self.hand_state[hand_type] = "swipe-left"
                 elif vy > self.SWIPE_THRESHOLD:
-                    self.complex_state = "swipe-up"
+                    self.hand_state[hand_type] = "swipe-up"
                 elif vy < -self.SWIPE_THRESHOLD:
-                    self.complex_state = "swipe-down"
-
-                self.complex_gesture_timestamp = time.time()  # Update the timestamp for the gesture
+                    self.hand_state[hand_type] = "swipe-down"
 
     def distance_between_hands(self):
         """
@@ -592,6 +591,7 @@ class ActionController:
         # Check if pinch is active and index finger is not extended
         if pinch_active and (pinch_strength > grab_strength) and not self.curr_hand.index.is_extended:
             gesture = "pinch"
+            self.right_pinch_time = current_time  # Update pinch time
         elif grab_active:
             if palm_orientation == "palm_away":
                 gesture = "grab_palm_away"
@@ -648,8 +648,7 @@ class ActionController:
         # -------------------------------------------------------------
         elif current_state == "pinch-holding":
             if gesture == "pinch":
-                self.last_pinch_time = time.time()  # Update last pinch time
-                self._check_for_pinch_swipe()  # Check for swipe while pinch-holding
+                self._check_for_pinch_swipe("right")  # Check for swipe while pinch-holding
             else:
                 # end pinch
                 self.press_up()
@@ -717,31 +716,6 @@ class ActionController:
             else:
                 self.hand_state["right"] = "open-palm-towards"
 
-        # -------------------------------------------------------------
-        #   FINAL BLOCK: Thumbs-up / Thumbs-down detection
-        #   (only if we're in "idle"/"open-palm"/"thumbs_x" states)
-        # -------------------------------------------------------------
-        if self.hand_state["right"]:
-            # Make sure we have a "curr_hand" for the right hand
-            if self.curr_hand is not None:
-                thumb_gesture = self.check_thumb_gesture(self.curr_hand)  
-            else:
-                thumb_gesture = None
-
-            if thumb_gesture is not None:
-                # e.g. "thumbs_up" or "thumbs_down"
-                if self.hand_state["right"] != thumb_gesture:
-                    self.hand_state["right"] = thumb_gesture
-            else:
-                # If we were in a thumb state but no longer detect it:
-                if self.hand_state["right"] in ("thumbs_up", "thumbs_down"):
-                    # revert to open palm based on orientation
-                    if palm_orientation == "palm_away":
-                        self.hand_state["right"] = "open-palm-away"
-                    else:
-                        self.hand_state["right"] = "open-palm-towards"
-
-
 
 
 
@@ -762,6 +736,7 @@ class ActionController:
         # checks if index finger 
         if pinch_active and (pinch_strength > grab_strength) and not self.curr_hand.index.is_extended: # this is_extended was added as a pinch would be registered when making a pointer finger
             gesture = "pinch"
+            self.left_pinch_time = current_time  # Update pinch time
         elif grab_active:
             if palm_orientation == "palm_away":
                 gesture = "grab_palm_away"
