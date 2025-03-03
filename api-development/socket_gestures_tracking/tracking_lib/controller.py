@@ -152,6 +152,9 @@ class ActionController:
 
         self.gesture_timeout = 0.3  # Time frame to reset complex gesture (in seconds)
         self.last_gesture_time = 0.0  # Last time a gesture was observed
+        
+        self.finger_cross_hold = 0.5 # Time frame to reset finger-cross gesture (in seconds)
+        self.last_time_crossed_fingers = 0.0 # Last time index fingers were crossed
 
     # -------------------------------------------------------------------------
     #  get_state() -> JSON with positional, gesture, and timestamp info
@@ -324,12 +327,14 @@ class ActionController:
 
         # Check if index fingers are overlapping or crossed
         crossed_finger_status = self.check_finger_cross(event.hands)
+        
 
         if crossed_finger_status["overlapping"]:
             # print("[Gesture] Index fingers are overlapping!")  # Removed print statement
             if crossed_finger_status["crossed"]:
                 # print("[Gesture] Index fingers are crossed!")  # Removed print statement
                 self.complex_state = "finger-cross"  # Set complex state to finger-cross
+                self.last_time_crossed_fingers = time.time()
 
         recognized_gesture = self.canvas.get_and_forget_drawn_gesture()
         
@@ -628,6 +633,7 @@ class ActionController:
         # -------------------------------------------------------------
         elif current_state == "pinch-pressing":
             if gesture == "pinch":
+                self._check_for_pinch_swipe("right")
                 elapsed = current_time - self.hand_press_time["right"]
                 if elapsed >= self.hold_threshold:
                     self.hand_state["right"] = "pinch-holding"
